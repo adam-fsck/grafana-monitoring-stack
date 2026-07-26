@@ -325,19 +325,19 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.50, {job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | context=\"HTTP\" | unwrap duration [$__interval])",
+          "expr": "quantile_over_time(0.50, {job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | context=\"HTTP\" | unwrap duration [$__interval]) by (container)",
           "legendFormat": "p50", "queryType": "range", "refId": "A"
         },
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.95, {job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | context=\"HTTP\" | unwrap duration [$__interval])",
+          "expr": "quantile_over_time(0.95, {job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | context=\"HTTP\" | unwrap duration [$__interval]) by (container)",
           "legendFormat": "p95", "queryType": "range", "refId": "B"
         },
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.99, {job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | context=\"HTTP\" | unwrap duration [$__interval])",
+          "expr": "quantile_over_time(0.99, {job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | context=\"HTTP\" | unwrap duration [$__interval]) by (container)",
           "legendFormat": "p99", "queryType": "range", "refId": "C"
         }
       ],
@@ -556,39 +556,39 @@
   "templating": {
     "list": [
       {
-        "current": { "selected": true, "text": "All", "value": ".*" },
+        "current": { "selected": true, "text": "All", "value": "^" },
         "hide": 0,
         "includeAll": false,
         "label": "Level",
         "multi": false,
         "name": "level",
         "options": [
-          { "selected": true, "text": "All", "value": ".*" },
+          { "selected": true, "text": "All", "value": "^" },
           { "selected": false, "text": "error", "value": "\"level\":\"error\"" },
           { "selected": false, "text": "warn", "value": "\"level\":\"warn\"" },
           { "selected": false, "text": "info", "value": "\"level\":\"info\"" },
           { "selected": false, "text": "debug", "value": "\"level\":\"debug\"" }
         ],
-        "query": "All : .*,error : \"level\":\"error\",warn : \"level\":\"warn\",info : \"level\":\"info\",debug : \"level\":\"debug\"",
+        "query": "All : ^,error : \"level\":\"error\",warn : \"level\":\"warn\",info : \"level\":\"info\",debug : \"level\":\"debug\"",
         "queryValue": "",
         "skipUrlSync": false,
         "type": "custom"
       },
       {
-        "current": { "selected": true, "text": "All", "value": ".*" },
+        "current": { "selected": true, "text": "All", "value": "^" },
         "hide": 0,
         "includeAll": false,
         "label": "Status class",
         "multi": false,
         "name": "status",
         "options": [
-          { "selected": true, "text": "All", "value": ".*" },
+          { "selected": true, "text": "All", "value": "^" },
           { "selected": false, "text": "2xx", "value": "\"statusCode\":2" },
           { "selected": false, "text": "3xx", "value": "\"statusCode\":3" },
           { "selected": false, "text": "4xx", "value": "\"statusCode\":4" },
           { "selected": false, "text": "5xx", "value": "\"statusCode\":5" }
         ],
-        "query": "All : .*,2xx : \"statusCode\":2,3xx : \"statusCode\":3,4xx : \"statusCode\":4,5xx : \"statusCode\":5",
+        "query": "All : ^,2xx : \"statusCode\":2,3xx : \"statusCode\":3,4xx : \"statusCode\":4,5xx : \"statusCode\":5",
         "queryValue": "",
         "skipUrlSync": false,
         "type": "custom"
