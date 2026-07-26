@@ -21,7 +21,7 @@
   "panels": [
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 24, "w": 24, "x": 0, "y": 0 },
       "id": 1,
       "options": {
         "dedupStrategy": "none", "enableInfiniteScrolling": false, "enableLogDetails": true,
@@ -33,32 +33,11 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{job=\"docker-containers\", container=\"coachlink-api-prod\"} | json | level=~\"error|warn\"",
+          "expr": "{job=\"docker-containers\", container=\"coachlink-api-prod\"} |~ \"${level:raw}\" |~ \"${status:raw}\" |~ \"${search:raw}\"",
           "legendFormat": "", "queryType": "range", "refId": "A"
         }
       ],
-      "title": "Errors & warnings",
-      "type": "logs"
-    },
-    {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 15, "w": 24, "x": 0, "y": 9 },
-      "id": 2,
-      "options": {
-        "dedupStrategy": "none", "enableInfiniteScrolling": false, "enableLogDetails": true,
-        "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true,
-        "sortOrder": "Descending", "wrapLogMessage": true
-      },
-      "pluginVersion": "13.1.1",
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "editorMode": "code",
-          "expr": "{job=\"docker-containers\", container=\"coachlink-api-prod\"} ${status_filter}",
-          "legendFormat": "", "queryType": "range", "refId": "A"
-        }
-      ],
-      "title": "All logs — coachlink-api-prod ($status_filter:text)",
+      "title": "coachlink-api-prod — logs (level: ${level:text}, status: ${status:text})",
       "type": "logs"
     }
   ],
@@ -68,23 +47,52 @@
   "templating": {
     "list": [
       {
-        "current": { "selected": true, "text": "All", "value": "" },
+        "current": { "selected": true, "text": "All", "value": ".*" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Level",
+        "multi": false,
+        "name": "level",
+        "options": [
+          { "selected": true, "text": "All", "value": ".*" },
+          { "selected": false, "text": "error", "value": "\"level\":\"error\"" },
+          { "selected": false, "text": "warn", "value": "\"level\":\"warn\"" },
+          { "selected": false, "text": "info", "value": "\"level\":\"info\"" },
+          { "selected": false, "text": "debug", "value": "\"level\":\"debug\"" }
+        ],
+        "query": "All : .*,error : \"level\":\"error\",warn : \"level\":\"warn\",info : \"level\":\"info\",debug : \"level\":\"debug\"",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": ".*" },
         "hide": 0,
         "includeAll": false,
         "label": "Status class",
         "multi": false,
-        "name": "status_filter",
+        "name": "status",
         "options": [
-          { "selected": true, "text": "All", "value": "" },
-          { "selected": false, "text": "2xx", "value": "| json | context=\"HTTP\" | statusCode >= 200 | statusCode < 300" },
-          { "selected": false, "text": "3xx", "value": "| json | context=\"HTTP\" | statusCode >= 300 | statusCode < 400" },
-          { "selected": false, "text": "4xx", "value": "| json | context=\"HTTP\" | statusCode >= 400 | statusCode < 500" },
-          { "selected": false, "text": "5xx", "value": "| json | context=\"HTTP\" | statusCode >= 500" }
+          { "selected": true, "text": "All", "value": ".*" },
+          { "selected": false, "text": "2xx", "value": "\"statusCode\":2" },
+          { "selected": false, "text": "3xx", "value": "\"statusCode\":3" },
+          { "selected": false, "text": "4xx", "value": "\"statusCode\":4" },
+          { "selected": false, "text": "5xx", "value": "\"statusCode\":5" }
         ],
-        "query": "All : ,2xx : | json | context=\"HTTP\" | statusCode >= 200 | statusCode < 300,3xx : | json | context=\"HTTP\" | statusCode >= 300 | statusCode < 400,4xx : | json | context=\"HTTP\" | statusCode >= 400 | statusCode < 500,5xx : | json | context=\"HTTP\" | statusCode >= 500",
+        "query": "All : .*,2xx : \"statusCode\":2,3xx : \"statusCode\":3,4xx : \"statusCode\":4,5xx : \"statusCode\":5",
         "queryValue": "",
         "skipUrlSync": false,
         "type": "custom"
+      },
+      {
+        "current": { "selected": true, "text": "", "value": "" },
+        "hide": 0,
+        "label": "Search text",
+        "name": "search",
+        "options": [],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
       }
     ]
   },
@@ -93,6 +101,6 @@
   "timezone": "browser",
   "title": "CoachLink API — PROD Logs",
   "uid": "coachlink-api-prod-logs",
-  "version": 1,
+  "version": 3,
   "weekStart": ""
 }

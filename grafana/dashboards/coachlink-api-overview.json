@@ -592,11 +592,11 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" ${status_filter}",
+          "expr": "{job=\"docker-containers\", container=~\"$container\"} |~ \"\\\"context\\\":\\\"HTTP\\\"\" |~ \"${status_filter:raw}\"",
           "legendFormat": "", "queryType": "range", "refId": "A"
         }
       ],
-      "title": "HTTP request logs — filter by status class ($status_filter:text)",
+      "title": "HTTP request logs — filter by status class (${status_filter:text})",
       "type": "logs"
     }
   ],
@@ -623,20 +623,20 @@
         "type": "custom"
       },
       {
-        "current": { "selected": true, "text": "All", "value": "" },
+        "current": { "selected": true, "text": "All", "value": ".*" },
         "hide": 0,
         "includeAll": false,
         "label": "Status class",
         "multi": false,
         "name": "status_filter",
         "options": [
-          { "selected": true, "text": "All", "value": "" },
-          { "selected": false, "text": "2xx", "value": "| statusCode >= 200 | statusCode < 300" },
-          { "selected": false, "text": "3xx", "value": "| statusCode >= 300 | statusCode < 400" },
-          { "selected": false, "text": "4xx", "value": "| statusCode >= 400 | statusCode < 500" },
-          { "selected": false, "text": "5xx", "value": "| statusCode >= 500" }
+          { "selected": true, "text": "All", "value": ".*" },
+          { "selected": false, "text": "2xx", "value": "\"statusCode\":2" },
+          { "selected": false, "text": "3xx", "value": "\"statusCode\":3" },
+          { "selected": false, "text": "4xx", "value": "\"statusCode\":4" },
+          { "selected": false, "text": "5xx", "value": "\"statusCode\":5" }
         ],
-        "query": "All : ,2xx : | statusCode >= 200 | statusCode < 300,3xx : | statusCode >= 300 | statusCode < 400,4xx : | statusCode >= 400 | statusCode < 500,5xx : | statusCode >= 500",
+        "query": "All : .*,2xx : \"statusCode\":2,3xx : \"statusCode\":3,4xx : \"statusCode\":4,5xx : \"statusCode\":5",
         "queryValue": "",
         "skipUrlSync": false,
         "type": "custom"
