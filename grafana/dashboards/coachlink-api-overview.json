@@ -37,8 +37,8 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(rate({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" [$__rate_interval]))",
-          "legendFormat": "", "queryType": "range", "refId": "A"
+          "expr": "sum by (container) (rate({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" [$__interval]))",
+          "legendFormat": "{{container}}", "queryType": "range", "refId": "A"
         }
       ],
       "title": "Requests/sec",
@@ -65,8 +65,8 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "100 * sum(rate({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" | statusCode >= 400 [$__rate_interval])) / sum(rate({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" [$__rate_interval]))",
-          "legendFormat": "", "queryType": "range", "refId": "A"
+          "expr": "100 * sum by (container) (rate({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" | statusCode >= 400 [$__interval])) / sum by (container) (rate({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" [$__interval]))",
+          "legendFormat": "{{container}}", "queryType": "range", "refId": "A"
         }
       ],
       "title": "Error rate (4xx+5xx)",
@@ -93,8 +93,8 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.95, {job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" | unwrap duration [$__interval])",
-          "legendFormat": "", "queryType": "range", "refId": "A"
+          "expr": "quantile_over_time(0.95, {job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" | unwrap duration [$__interval]) by (container)",
+          "legendFormat": "{{container}}", "queryType": "range", "refId": "A"
         }
       ],
       "title": "P95 call duration",
@@ -115,8 +115,8 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "avg_over_time({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" | unwrap duration [$__interval])",
-          "legendFormat": "", "queryType": "range", "refId": "A"
+          "expr": "avg_over_time({job=\"docker-containers\", container=~\"$container\"} | json | context=\"HTTP\" | unwrap duration [$__interval]) by (container)",
+          "legendFormat": "{{container}}", "queryType": "range", "refId": "A"
         }
       ],
       "title": "Avg call duration",
