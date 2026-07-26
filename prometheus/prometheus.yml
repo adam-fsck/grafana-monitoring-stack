@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Grafana Alloy performs all scrapes and writes samples through Prometheus's
+# remote-write receiver. Keeping this list empty avoids duplicate collection.
+scrape_configs: []

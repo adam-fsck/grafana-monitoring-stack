@@ -1,0 +1,142 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// -----------------------------------------------------------------------------
+// Metrics: cAdvisor and stack self-monitoring -> Prometheus
+// -----------------------------------------------------------------------------
+
+prometheus.scrape "cadvisor" {
+  targets = [
+    {
+      "__address__" = "cadvisor:8080",
+    },
+  ]
+
+  job_name        = "cadvisor"
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.scrape "alloy" {
+  targets = [
+    {
+      "__address__" = "alloy:12345",
+    },
+  ]
+
+  job_name        = "alloy"
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.scrape "prometheus" {
+  targets = [
+    {
+      "__address__" = "prometheus:9090",
+    },
+  ]
+
+  job_name        = "prometheus"
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.scrape "grafana" {
+  targets = [
+    {
+      "__address__" = "grafana:3000",
+    },
+  ]
+
+  job_name        = "grafana"
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.scrape "loki" {
+  targets = [
+    {
+      "__address__" = "loki:3100",
+    },
+  ]
+
+  job_name        = "loki"
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Logs: discover every Docker container -> Loki
+// Collects container stdout/stderr, equivalent to data visible via docker logs.
+// -----------------------------------------------------------------------------
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "docker_logs" {
+  // This component is used for its exported rules. The discovered targets are
+  // supplied directly to loki.source.docker below.
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "service_name"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_image"]
+    target_label  = "image"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.source.docker "containers" {
+  host    = "unix:///var/run/docker.sock"
+  targets = discovery.docker.containers.targets
+
+  labels = {
+    "job"      = "docker-containers",
+    "platform" = "docker",
+    "host"     = sys.env("MONITORING_HOST"),
+  }
+
+  relabel_rules = discovery.relabel.docker_logs.rules
+  forward_to    = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
