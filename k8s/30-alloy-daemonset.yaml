@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: grafana-monitoring-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alloy
+        app.kubernetes.io/part-of: grafana-monitoring-stack
+      annotations:
+        # Reštartuje pody pri zmene configu — ConfigMap sa v pripojenom zväzku
+        # síce aktualizuje sám, ale Alloy ho znovu nenačíta.
+        checksum/config: "replace-on-config-change"
+    spec:
+      serviceAccountName: alloy
+      # Alloy zdieľa sieť servera, takže 127.0.0.1 je loopback HOSTA. Vďaka
+      # tomu doručí dáta do Loki/Promethea publikovaných Dockerom na
+      # 127.0.0.1 a nič sa nemusí vystavovať do siete. Zároveň sa tým
+      # scrapuje kubelet na uzle bez ďalšieho smerovania.
+      hostNetwork: true
+      # Bez tohto by pod s hostNetwork používal DNS hosta a nevedel by
+      # rozložiť mená služieb v klastri.
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        # Nech Alloy beží na každom uzle vrátane control-plane — v k3s je
+        # server spravidla aj jediný pracovný uzol.
+        - operator: Exists
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.18.0
+          args:
+            - run
+            # Alloy UI sa viaže len na loopback: pri hostNetwork by inak
+            # počúvalo na verejnom rozhraní servera bez akejkoľvek autentizácie.
+            - --server.http.listen-addr=127.0.0.1:12346
+            - --storage.path=/var/lib/alloy/data
+            - /etc/alloy/config.alloy
+          env:
+            - name: LOKI_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: alloy-endpoints
+                  key: LOKI_URL
+            - name: PROMETHEUS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: alloy-endpoints
+                  key: PROMETHEUS_URL
+            - name: CLUSTER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: alloy-endpoints
+                  key: CLUSTER_NAME
+            - name: HEALTH_URL_DEV
+              valueFrom:
+                configMapKeyRef:
+                  name: alloy-endpoints
+                  key: HEALTH_URL_DEV
+            - name: HEALTH_URL_PROD
+              valueFrom:
+                configMapKeyRef:
+                  name: alloy-endpoints
+                  key: HEALTH_URL_PROD
+          # Pri hostNetwork sa hostPort neuvádza — port už je hostiteľský a
+          # deklarovanie hostPort by len zbytočne obmedzilo plánovanie.
+          ports:
+            - name: http
+              containerPort: 12346
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/alloy/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 12346
+              host: 127.0.0.1
+            initialDelaySeconds: 20
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        # Pozícia v logoch (aby sa po reštarte nezačalo odznova) prežije reštart
+        # podu, nie však reboot uzla — pre monitoring je to postačujúce a
+        # nevyžaduje to PersistentVolume.
+        - name: data
+          hostPath:
+            path: /var/lib/alloy-k3s
+            type: DirectoryOrCreate

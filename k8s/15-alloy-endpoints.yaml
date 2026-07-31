@@ -1,0 +1,27 @@
+# Adresy, kam Alloy posiela dáta, a URL pre health probe.
+#
+# Alloy beží s hostNetwork: true, takže 127.0.0.1 tu znamená loopback SERVERA
+# — teda porty, ktoré Docker publikuje podľa .env (LOKI_PORT, PROMETHEUS_PORT).
+# Ak sa v .env zmenia porty, uprav aj tieto hodnoty.
+#
+# Ak by monitoring niekedy bežal na inom stroji, stačí sem dať jeho adresu
+# (a ten port sprístupniť) — zvyšok manifestov sa nemení.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-endpoints
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: grafana-monitoring-stack
+data:
+  LOKI_URL: "http://127.0.0.1:5004/loki/api/v1/push"
+  PROMETHEUS_URL: "http://127.0.0.1:5001/api/v1/write"
+
+  # Štítok `cluster` na všetkých logoch z k3s.
+  CLUSTER_NAME: "k3s-server"
+
+  # End-to-end health probe cez verejnú URL — meria to isté, čo vidí
+  # používateľ (vrátane reverznej proxy a TLS), nie len stav podu.
+  HEALTH_URL_DEV: "https://api-dev.coachlink.sk/health"
+  HEALTH_URL_PROD: "https://api.coachlink.sk/health"

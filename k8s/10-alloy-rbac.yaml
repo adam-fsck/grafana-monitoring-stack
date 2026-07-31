@@ -1,0 +1,68 @@
+# Oprávnenia pre Alloy. Všetko je iba na čítanie — Alloy v tomto nasadení nič
+# v klastri nevytvára ani nemení.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: grafana-monitoring-stack
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: grafana-monitoring-stack
+rules:
+  # Objavovanie podov/služieb/uzlov, z ktorých sa zbierajú logy a metriky.
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+      - namespaces
+    verbs: ["get", "list", "watch"]
+  # Čítanie logov podov cez Kubernetes API (loki.source.kubernetes).
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+      - deployments
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs: ["get", "list", "watch"]
+  # Kubelet metriky (/metrics/cadvisor) sa volajú cez neresource URL.
+  - nonResourceURLs:
+      - /metrics
+      - /metrics/cadvisor
+      - /metrics/resource
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: grafana-monitoring-stack
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: monitoring

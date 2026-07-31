@@ -1,0 +1,276 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: grafana-monitoring-stack
+data:
+  config.alloy: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    // =========================================================================
+    // Kam sa dáta posielajú
+    //
+    // Alloy beží s hostNetwork: true, takže 127.0.0.1 je loopback SERVERA, nie
+    // podu — dosiahne teda na porty, ktoré Docker publikuje na 127.0.0.1.
+    // Vďaka tomu môžu Loki aj Prometheus zostať viazané len na localhost a
+    // nemusí sa kvôli k3s nič vystavovať do siete.
+    // =========================================================================
+
+    loki.write "monitoring" {
+      endpoint {
+        url = sys.env("LOKI_URL")
+      }
+    }
+
+    prometheus.remote_write "monitoring" {
+      endpoint {
+        url = sys.env("PROMETHEUS_URL")
+      }
+    }
+
+    // =========================================================================
+    // LOGY: všetky pody v klastri -> Loki
+    // =========================================================================
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+
+      // Zbierajú sa len bežiace pody; Pending/Succeeded/Failed nemajú živý log
+      // stream a Alloy by sa na ne opakovane a zbytočne pokúšal pripojiť.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_phase"]
+        regex         = "Running"
+        action        = "keep"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label  = "node"
+      }
+
+      // `app` sa berie z bežných štítkov, s postupným fallbackom až na meno
+      // kontajnera — nespoliehame sa na to, že appky majú konkrétny štítok.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        target_label  = "app"
+      }
+
+      rule {
+        source_labels = ["app", "__meta_kubernetes_pod_label_app"]
+        separator     = ";"
+        regex         = ";(.+)"
+        target_label  = "app"
+      }
+
+      rule {
+        source_labels = ["app", "__meta_kubernetes_pod_container_name"]
+        separator     = ";"
+        regex         = ";(.+)"
+        target_label  = "app"
+      }
+
+      // Prostredie sa odvodzuje z prípony mena kontajnera/podu
+      // (coachlink-api-dev, coachlink-redis-prod, …). Čokoľvek bez prípony
+      // zostane bez štítku `env`, nie nesprávne označené.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        regex         = ".*-(dev|prod)"
+        target_label  = "env"
+        replacement   = "$1"
+      }
+    }
+
+    // Logy sa čítajú cez Kubernetes API, nie zo súborov na uzle — nezávisí to
+    // teda na tom, ako má daný runtime nastavené /var/log/pods a funguje to
+    // rovnako na k3s aj inde.
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.process.pod_logs.receiver]
+    }
+
+    loki.process "pod_logs" {
+      forward_to = [loki.write.monitoring.receiver]
+
+      // Statické štítky spoločné pre celý klaster. `job` je zámerne iný než
+      // docker-containers, aby sa k3s a Docker logy dali v Grafane odlíšiť
+      // a staré Docker dashboardy fungovali ďalej bez zmeny.
+      stage.static_labels {
+        values = {
+          job      = "k3s-pods",
+          platform = "k3s",
+          cluster  = sys.env("CLUSTER_NAME"),
+        }
+      }
+    }
+
+    // =========================================================================
+    // METRIKY: kubelet + cAdvisor (CPU, RAM, sieť, disk per pod)
+    // =========================================================================
+
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    discovery.relabel "kubelet" {
+      targets = discovery.kubernetes.nodes.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label  = "node"
+      }
+
+      // Kubelet počúva na 10250; discovery vracia adresu uzla bez portu.
+      rule {
+        source_labels = ["__meta_kubernetes_node_address_InternalIP"]
+        regex         = "(.+)"
+        target_label  = "__address__"
+        replacement   = "$1:10250"
+      }
+    }
+
+    // Metriky kontajnerov z cAdvisoru zabudovaného v kubelete. Sú to tie isté
+    // container_* metriky, aké na Dockeri poskytuje samostatný cAdvisor, len
+    // so štítkami namespace/pod/container namiesto `name`.
+    prometheus.scrape "kubelet_cadvisor" {
+      targets      = discovery.relabel.kubelet.output
+      job_name     = "kubelet-cadvisor"
+      metrics_path = "/metrics/cadvisor"
+      scheme       = "https"
+      scrape_interval = "15s"
+
+      bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+      tls_config {
+        // Kubelet v k3s má self-signed certifikát vydaný pre IP uzla; overenie
+        // proti CA klastra by tu zlyhalo. Spojenie nejde mimo tento server.
+        insecure_skip_verify = true
+      }
+
+      forward_to = [prometheus.remote_write.monitoring.receiver]
+    }
+
+    prometheus.scrape "kubelet" {
+      targets      = discovery.relabel.kubelet.output
+      job_name     = "kubelet"
+      metrics_path = "/metrics"
+      scheme       = "https"
+      scrape_interval = "15s"
+
+      bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+      tls_config {
+        insecure_skip_verify = true
+      }
+
+      forward_to = [prometheus.remote_write.monitoring.receiver]
+    }
+
+    // =========================================================================
+    // ZDRAVIE: kube-state-metrics (reštarty, ready, phase, repliky)
+    // =========================================================================
+
+    discovery.relabel "kube_state_metrics" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        separator     = "/"
+        regex         = "monitoring/kube-state-metrics"
+        action        = "keep"
+      }
+
+      // kube-state-metrics vystavuje dva porty (8080 metriky, 8081 telemetria)
+      // a discovery vyrobí cieľ pre KAŽDÝ z nich. Bez tohto filtra by sa ten
+      // istý endpoint scrapoval dvakrát ako dva rovnaké ciele.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_port_name"]
+        regex         = "http-metrics"
+        action        = "keep"
+      }
+
+      // Scrapuje sa priamo IP podu (nie ClusterIP služby) — z host network
+      // namespace je pod IP dostupná priamo a nezávisí to na kube-proxy.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_ip"]
+        regex         = "(.+)"
+        target_label  = "__address__"
+        replacement   = "$1:8080"
+      }
+    }
+
+    prometheus.scrape "kube_state_metrics" {
+      targets         = discovery.relabel.kube_state_metrics.output
+      job_name        = "kube-state-metrics"
+      scrape_interval = "30s"
+      forward_to      = [prometheus.remote_write.monitoring.receiver]
+    }
+
+    // =========================================================================
+    // ZDRAVIE: end-to-end HTTP probe verejných /health endpointov
+    //
+    // Zámerne cez verejnú URL, nie cez ClusterIP: takto sa meria to isté, čo
+    // vidí používateľ, vrátane reverznej proxy a TLS. Presne tento pohľad
+    // chýbal, keď API vracalo 502 z proxy a v klastri sa to nijako neprejavilo.
+    // =========================================================================
+
+    // Kontroluje sa iba HTTP status. Endpoint /health vracia 200 len keď je
+    // appka aj databáza v poriadku, inak 503 — stavový kód teda nesie celú
+    // informáciu a netreba krehké regexy na telo odpovede.
+    prometheus.exporter.blackbox "health" {
+      config = "{ modules: { http_2xx: { prober: http, timeout: 10s } } }"
+
+      target {
+        name    = "coachlink-api-dev"
+        address = sys.env("HEALTH_URL_DEV")
+        module  = "http_2xx"
+      }
+
+      target {
+        name    = "coachlink-api-prod"
+        address = sys.env("HEALTH_URL_PROD")
+        module  = "http_2xx"
+      }
+    }
+
+    prometheus.scrape "health" {
+      targets         = prometheus.exporter.blackbox.health.targets
+      job_name        = "health-probe"
+      scrape_interval = "30s"
+      forward_to      = [prometheus.remote_write.monitoring.receiver]
+    }
+
+    // =========================================================================
+    // Self-monitoring Alloy v klastri
+    // =========================================================================
+
+    prometheus.exporter.self "alloy" {}
+
+    prometheus.scrape "alloy" {
+      targets         = prometheus.exporter.self.alloy.targets
+      job_name        = "alloy-k3s"
+      scrape_interval = "30s"
+      forward_to      = [prometheus.remote_write.monitoring.receiver]
+    }

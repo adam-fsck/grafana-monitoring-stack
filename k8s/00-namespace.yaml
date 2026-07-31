@@ -1,0 +1,12 @@
+# Namespace pre zbernú časť monitoringu bežiacu v k3s.
+#
+# Samotná Grafana, Prometheus a Loki zostávajú v Dockeri na tom istom serveri
+# (docker-compose.yml v koreni projektu) — v klastri beží len Alloy, ktorý
+# zbiera dáta, a kube-state-metrics, ktorý ich vyrába. Docker režim tak
+# funguje ďalej úplne bez zmeny.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: grafana-monitoring-stack

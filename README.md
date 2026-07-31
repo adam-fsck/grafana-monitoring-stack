@@ -1,17 +1,25 @@
-# Docker monitoring stack: Grafana + Alloy + Prometheus + cAdvisor + Loki
+# Monitoring stack: Grafana + Alloy + Prometheus + cAdvisor + Loki
 
-Production-oriented single-host Docker monitoring for an Ubuntu Docker server.
-It automatically discovers **all current and future Docker containers** on the
-host and collects:
+Production-oriented single-host monitoring for an Ubuntu server running
+**Docker, k3s, or both side by side**. It automatically discovers all current
+and future workloads and collects:
 
 - CPU usage
 - RAM working-set usage
 - Network receive/transmit throughput
 - Container filesystem read/write throughput
 - Container `stdout` and `stderr` logs
+- Kubernetes pod health: restarts, readiness, phase (k3s only)
+- End-to-end HTTP health probes of the public API endpoints (k3s only)
 - Basic self-monitoring metrics for Grafana, Alloy, Prometheus and Loki
 
-A ready-made Grafana dashboard and both data sources are provisioned automatically.
+Ready-made Grafana dashboards and both data sources are provisioned
+automatically.
+
+Docker and k3s collection are independent. Running only Docker needs nothing
+from the `k8s/` directory; adding k3s leaves the Docker path untouched. Logs
+from the two are separated by the `job` label — `docker-containers` versus
+`k3s-pods` — so dashboards for one never mix in data from the other.
 
 ## Included versions
 
@@ -29,9 +37,23 @@ upgrade the stack to an incompatible release.
 ## Data flow
 
 ```text
-Docker container metrics ──> cAdvisor ──> Alloy ──> Prometheus ──> Grafana
-Docker stdout/stderr logs ───────────────> Alloy ──> Loki ───────> Grafana
+Docker container metrics ──> cAdvisor ──────> Alloy ──> Prometheus ──> Grafana
+Docker stdout/stderr logs ───────────────────> Alloy ──> Loki ───────> Grafana
+
+k3s pod logs ────────────────> Alloy (DaemonSet) ──────> Loki ───────> Grafana
+k3s pod CPU/RAM/net/disk ────> kubelet cAdvisor ──┐
+k3s restarts / readiness ────> kube-state-metrics ─┼─> Alloy ──> Prometheus ──> Grafana
+public /health probes ───────> blackbox ──────────┘
 ```
+
+Grafana, Prometheus and Loki always run in Docker. In a k3s setup the only
+in-cluster components are Alloy (collector) and kube-state-metrics (producer of
+health metrics).
+
+The in-cluster Alloy runs with `hostNetwork: true`, so `127.0.0.1` inside that
+pod is the **server's** loopback. It therefore reaches the Loki and Prometheus
+ports Docker publishes on `127.0.0.1`, and those two stay bound to localhost —
+adding k3s does not expose anything to the network.
 
 ## Ports
 
@@ -366,7 +388,84 @@ docker exec prometheus du -sh /prometheus
 docker exec loki du -sh /loki
 ```
 
-## 11. Updating the stack
+## 11. Collect from k3s (optional)
+
+Skip this section entirely on a Docker-only host. The Docker collection
+described above keeps working exactly as before whether or not k3s is present.
+
+### 11.1 What gets deployed
+
+Everything lands in the `monitoring` namespace:
+
+| Object | Purpose |
+|---|---|
+| `alloy` (DaemonSet) | Reads pod logs and scrapes kubelet metrics on every node |
+| `kube-state-metrics` (Deployment) | Produces health metrics: restarts, readiness, phase |
+| `alloy-config` (ConfigMap) | Alloy pipeline definition |
+| `alloy-endpoints` (ConfigMap) | Where to ship data, and which URLs to health-probe |
+
+### 11.2 Check the endpoints first
+
+`k8s/15-alloy-endpoints.yaml` assumes the defaults from `.env` — Loki on
+`5004`, Prometheus on `5001`, both on the same server. If those ports were
+changed, or the health probe should point elsewhere, edit that file before
+applying:
+
+```bash
+nano k8s/15-alloy-endpoints.yaml
+```
+
+### 11.3 Apply
+
+```bash
+kubectl apply -f k8s/
+```
+
+### 11.4 Verify
+
+```bash
+kubectl -n monitoring get pods
+kubectl -n monitoring logs daemonset/alloy --tail=50
+```
+
+`alloy` should be `Running` on every node and `kube-state-metrics` `Running`
+once. The bundled script also checks whether data actually lands in Loki:
+
+```bash
+./scripts/check-stack.sh
+```
+
+Confirm logs are arriving, replacing the namespace with your own:
+
+```bash
+curl -s -G 'http://127.0.0.1:5004/loki/api/v1/query' \
+  --data-urlencode 'query={job="k3s-pods", namespace="coachlink"}' | head -c 400
+```
+
+In Grafana, open the **CoachLink BE — k3s (dev + prod)** dashboard. Pick a
+namespace and containers at the top; dev and prod are separated by the
+container name, and every pod log also carries an `env` label (`dev` / `prod`)
+derived from that name.
+
+### 11.5 After changing the Alloy config
+
+A mounted ConfigMap updates itself, but Alloy does not re-read it. Restart the
+DaemonSet after editing `k8s/20-alloy-config.yaml`:
+
+```bash
+kubectl apply -f k8s/20-alloy-config.yaml
+kubectl -n monitoring rollout restart daemonset/alloy
+```
+
+### 11.6 Removing the k3s collector
+
+```bash
+kubectl delete -f k8s/
+```
+
+The Docker stack is unaffected.
+
+## 12. Updating the stack
 
 The images are pinned. To apply the same pinned images again:
 
@@ -432,3 +531,38 @@ curl -fsS http://127.0.0.1:5004/ready
 
 Confirm that the application writes to stdout/stderr and does not use logging
 driver `none`.
+
+### No k3s logs or metrics reach the stack
+
+```bash
+kubectl -n monitoring get pods
+kubectl -n monitoring logs daemonset/alloy --tail=100
+```
+
+Work through these in order:
+
+1. **`CrashLoopBackOff` on `alloy`** — usually a syntax error in
+   `k8s/20-alloy-config.yaml`. The reason is in the pod log.
+2. **`connection refused` to Loki or Prometheus** — the DaemonSet must run with
+   `hostNetwork: true` for `127.0.0.1` to mean the server. Verify the ports in
+   `k8s/15-alloy-endpoints.yaml` match `LOKI_PORT` and `PROMETHEUS_PORT`
+   in `.env`.
+3. **Logs arrive but metrics do not** — the kubelet scrape needs the RBAC in
+   `k8s/10-alloy-rbac.yaml`; `403` in the Alloy log means it was not applied.
+4. **`probe_success` missing** — check the URLs in `HEALTH_URL_DEV` and
+   `HEALTH_URL_PROD`; they are probed from the server, so any name used there
+   must resolve on it.
+
+Check what Loki actually received:
+
+```bash
+curl -s -G 'http://127.0.0.1:5004/loki/api/v1/series' \
+  --data-urlencode 'match[]={job="k3s-pods"}' | head -c 400
+```
+
+### CPU or RAM per pod looks roughly twice as high as expected
+
+cAdvisor reports a per-container series **and** a pod-level aggregate whose
+`container` label is empty. Summing both double-counts. Every query in the
+bundled dashboard filters with `container!=""`; keep that filter in custom
+panels too.
