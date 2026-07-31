@@ -15,12 +15,21 @@ spec:
       labels:
         app.kubernetes.io/name: alloy
         app.kubernetes.io/part-of: grafana-monitoring-stack
-      annotations:
-        # Reštartuje pody pri zmene configu — ConfigMap sa v pripojenom zväzku
-        # síce aktualizuje sám, ale Alloy ho znovu nenačíta.
-        checksum/config: "replace-on-config-change"
     spec:
       serviceAccountName: alloy
+      # Alloy beží ako root — rovnako ako služba `alloy` v docker-compose.yml,
+      # ktorá má `user: "0:0"`.
+      #
+      # Dôvod: úložisko je hostPath adresár, ktorý kubelet vytvorí ako root
+      # s právami 0755. Neprivilegovaný používateľ z image (UID 473) si doň
+      # nevie vytvoriť dátový podadresár a Alloy padne na
+      # „mkdir /var/lib/alloy/data: permission denied". Na hostPath zväzky sa
+      # `fsGroup` nevzťahuje, takže sa to inak než rootom (alebo initKontajnerom
+      # navyše) nevyrieši. Zvýšené oprávnenia sú aj tak odobraté nižšie
+      # cez capabilities: drop ALL a allowPrivilegeEscalation: false.
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
       # Alloy zdieľa sieť servera, takže 127.0.0.1 je loopback HOSTA. Vďaka
       # tomu doručí dáta do Loki/Promethea publikovaných Dockerom na
       # 127.0.0.1 a nič sa nemusí vystavovať do siete. Zároveň sa tým
