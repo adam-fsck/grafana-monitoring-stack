@@ -95,10 +95,19 @@ spec:
               readOnly: true
             - name: data
               mountPath: /var/lib/alloy/data
+          # `drop: ALL` on its own removes CAP_DAC_OVERRIDE even from UID 0 —
+          # root then still needs owning-UID + mode bits to line up for every
+          # syscall on the hostPath mount, and observed in practice that this
+          # was NOT enough here (Alloy kept crashing on
+          # "mkdir /var/lib/alloy/data: permission denied" even while running
+          # as root). CAP_DAC_OVERRIDE is added back explicitly — it's the
+          # one thing "run as root" is actually for, and every other
+          # capability stays dropped.
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+              add: ["DAC_OVERRIDE"]
           livenessProbe:
             httpGet:
               path: /-/healthy
