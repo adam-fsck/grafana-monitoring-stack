@@ -167,6 +167,27 @@ services:
     networks:
       - monitoring
 
+  # Polls Microsoft Graph for Entra ID sign-in and directory audit logs and
+  # pushes them to Loki. See exporters/entra-signin-logs/README.md for the
+  # required Azure App Registration setup (manual, one-time, in the Azure
+  # portal — not something this stack can do for you).
+  entra-exporter:
+    build: ./exporters/entra-signin-logs
+    container_name: entra-exporter
+    restart: unless-stopped
+    environment:
+      ENTRA_TENANT_ID: "${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}"
+      ENTRA_CLIENT_ID: "${ENTRA_CLIENT_ID:?Set ENTRA_CLIENT_ID in .env}"
+      ENTRA_CLIENT_SECRET: "${ENTRA_CLIENT_SECRET:?Set ENTRA_CLIENT_SECRET in .env}"
+      ENTRA_POLL_INTERVAL_SECONDS: "${ENTRA_POLL_INTERVAL_SECONDS:-300}"
+      LOKI_URL: "http://loki:3100/loki/api/v1/push"
+    volumes:
+      - entra_exporter_state:/state
+    depends_on:
+      - loki
+    networks:
+      - monitoring
+
 networks:
   monitoring:
     name: grafana-monitoring
@@ -177,3 +198,4 @@ volumes:
   alloy_data:
   loki_data:
   seaweedfs_data:
+  entra_exporter_state:

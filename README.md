@@ -32,6 +32,7 @@ from the two are separated by the `job` label — `docker-containers` versus
 | Loki | `grafana/loki:3.7.2` |
 | SeaweedFS | `chrislusf/seaweedfs:4.54` |
 | AWS CLI (bucket init only) | `amazon/aws-cli:2.41.2` |
+| Entra exporter base image | `python:3.13-slim` |
 
 Versions are pinned deliberately. A normal restart therefore cannot silently
 upgrade the stack to an incompatible release.
@@ -536,7 +537,7 @@ kubectl delete -f k8s/
 
 The Docker stack is unaffected.
 
-## 13. Additional log sources: firewall, ESET PROTECT
+## 13. Additional log sources: firewall, ESET PROTECT, Microsoft 365
 
 ### 13.1 Firewall (generic syslog)
 
@@ -565,6 +566,14 @@ pure on-prem setup is ESET PROTECT's own Syslog JSON export:
 Events land under `job="eset-protect"`. Note ESET's own JSON export has a
 documented typo — the detection-time field is `occured`, not `occurred` —
 account for both when writing LogQL/JSON parsing.
+
+### 13.3 Microsoft 365 (Entra ID sign-in/audit logs)
+
+Handled by a separate small exporter service (`entra-exporter`), not Alloy —
+Graph API needs OAuth client-credentials polling, which doesn't fit a syslog
+or file-tail model. One-time Azure setup and details:
+[exporters/entra-signin-logs/README.md](exporters/entra-signin-logs/README.md).
+Logs land under `job="entra-signin"` / `job="entra-directory-audit"`.
 
 ## 14. Updating the stack
 
