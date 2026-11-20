@@ -52,6 +52,13 @@ services:
     user: "0:0"
     ports:
       - "${MONITORING_BIND_ADDRESS:-127.0.0.1}:${ALLOY_PORT:-5002}:12345"
+      # Syslog receivers for the firewall and ESET PROTECT On-Prem. Unlike
+      # the port above, these must be reachable FROM those devices on the
+      # LAN, so they bind separately (see SYSLOG_BIND_ADDRESS in
+      # .env.example). Syslog has no built-in auth — restrict with a
+      # host/network firewall rule to just those two devices' IPs.
+      - "${SYSLOG_BIND_ADDRESS:-127.0.0.1}:${SYSLOG_FIREWALL_PORT:-5007}:5514/udp"
+      - "${SYSLOG_BIND_ADDRESS:-127.0.0.1}:${SYSLOG_ESET_PORT:-5008}:5515/udp"
     environment:
       MONITORING_HOST: "${MONITORING_HOST:-docker-host}"
       TZ: "${TZ:-Europe/Bratislava}"

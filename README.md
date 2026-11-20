@@ -69,11 +69,16 @@ All published host ports are in the `5000+` range.
 | cAdvisor UI | `5003` | `8080` | `127.0.0.1` |
 | Loki | `5004` | `3100` | `127.0.0.1` |
 | SeaweedFS S3 | `5005` | `8333` | `127.0.0.1` |
+| Syslog (firewall) | `5007` | `5514/udp` | `127.0.0.1` — must change, see section 13.1 |
+| Syslog (ESET PROTECT) | `5008` | `5515/udp` | `127.0.0.1` — must change, see section 13.2 |
 
 Only Grafana is remotely reachable by default. Prometheus, Alloy, cAdvisor,
 Loki and SeaweedFS have no authentication in this single-host configuration,
 so they remain bound to localhost. Do not change `MONITORING_BIND_ADDRESS` to
 `0.0.0.0` unless a firewall or authenticated reverse proxy restricts access.
+The two syslog ports are the deliberate exception — they must be reachable
+from the firewall/ESET server on the LAN, controlled separately by
+`SYSLOG_BIND_ADDRESS` (see section 13).
 
 ## 1. Upload and unpack
 
@@ -531,7 +536,37 @@ kubectl delete -f k8s/
 
 The Docker stack is unaffected.
 
-## 13. Updating the stack
+## 13. Additional log sources: firewall, ESET PROTECT
+
+### 13.1 Firewall (generic syslog)
+
+Alloy listens for UDP syslog on port `5514` (host port `SYSLOG_FIREWALL_PORT`,
+default `5007`). Point the firewall's syslog/remote-logging setting at
+`<this-host-LAN-IP>:${SYSLOG_FIREWALL_PORT}`. No vendor-specific parsing is
+applied — the raw message is stored under `job="firewall"`; filter and parse
+with LogQL in Grafana once you know the actual format.
+
+`SYSLOG_BIND_ADDRESS` defaults to `127.0.0.1`, which the firewall cannot
+reach. Set it to this host's LAN IP (or `0.0.0.0`) in `.env`, and restrict
+inbound UDP on that port to the firewall's IP with a host/network firewall
+rule — syslog itself has no authentication.
+
+### 13.2 ESET PROTECT On-Prem
+
+The on-prem REST API has no documented detections/alerts endpoint (ESET's
+detections API is cloud-only, via ESET Connect). The supported path for a
+pure on-prem setup is ESET PROTECT's own Syslog JSON export:
+
+1. ESET PROTECT Web Console → **More** → **Notifications** → create a new
+   notification/filter for the events you want (e.g. `Threat_Event`).
+2. Set the delivery method to **Syslog**, target `<this-host-LAN-IP>`, port
+   `${SYSLOG_ESET_PORT}` (default `5008`), UDP, format JSON.
+
+Events land under `job="eset-protect"`. Note ESET's own JSON export has a
+documented typo — the detection-time field is `occured`, not `occurred` —
+account for both when writing LogQL/JSON parsing.
+
+## 14. Updating the stack
 
 The images are pinned. To apply the same pinned images again:
 

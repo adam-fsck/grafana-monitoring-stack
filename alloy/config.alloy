@@ -140,3 +140,33 @@ loki.write "local" {
     url = "http://loki:3100/loki/api/v1/push"
   }
 }
+
+// -----------------------------------------------------------------------------
+// Logs: syslog receivers for the firewall and ESET PROTECT On-Prem.
+// Both devices must be configured to send their logs/notifications to this
+// host on the matching port (see README section 13). Message bodies are
+// stored as-is (ESET sends JSON; the firewall's format depends on the
+// device) — parse at query time in Grafana/LogQL.
+// -----------------------------------------------------------------------------
+
+loki.source.syslog "network_devices" {
+  listener {
+    address  = "0.0.0.0:5514"
+    protocol = "udp"
+    labels = {
+      job      = "firewall",
+      platform = "syslog",
+    }
+  }
+
+  listener {
+    address  = "0.0.0.0:5515"
+    protocol = "udp"
+    labels = {
+      job      = "eset-protect",
+      platform = "syslog",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
