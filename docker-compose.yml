@@ -36,7 +36,7 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-395d}"
       - "--web.enable-lifecycle"
       - "--web.enable-remote-write-receiver"
     volumes:
@@ -100,9 +100,63 @@ services:
       - "${MONITORING_BIND_ADDRESS:-127.0.0.1}:${LOKI_PORT:-5004}:3100"
     command:
       - "-config.file=/etc/loki/loki.yml"
+      - "-config.expand-env=true"
+    environment:
+      SEAWEEDFS_ENDPOINT: "seaweedfs:8333"
+      SEAWEEDFS_LOKI_BUCKET: "${SEAWEEDFS_LOKI_BUCKET:-loki-logs}"
+      SEAWEEDFS_ACCESS_KEY: "${SEAWEEDFS_ACCESS_KEY:?Set SEAWEEDFS_ACCESS_KEY in .env}"
+      SEAWEEDFS_SECRET_KEY: "${SEAWEEDFS_SECRET_KEY:?Set SEAWEEDFS_SECRET_KEY in .env}"
     volumes:
       - ./loki/loki.yml:/etc/loki/loki.yml:ro
       - loki_data:/loki
+    depends_on:
+      seaweedfs-init:
+        condition: service_completed_successfully
+    networks:
+      - monitoring
+
+  # Self-hosted S3-compatible object store for Loki. Provides Object Lock
+  # (WORM) and server-side encryption — see README section 10a.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.54
+    container_name: seaweedfs
+    restart: unless-stopped
+    environment:
+      WEED_S3_SSE_KEK: "${SEAWEEDFS_SSE_KEK:?Set SEAWEEDFS_SSE_KEK in .env (openssl rand -hex 32)}"
+      TZ: "${TZ:-Europe/Bratislava}"
+    command:
+      - server
+      - "-dir=/data"
+      - "-filer"
+      - "-s3"
+      - "-s3.port=8333"
+    ports:
+      - "${MONITORING_BIND_ADDRESS:-127.0.0.1}:${SEAWEEDFS_S3_PORT:-5005}:8333"
+    volumes:
+      - seaweedfs_data:/data
+    networks:
+      - monitoring
+
+  # One-shot: creates the Loki bucket with Object Lock enabled (WORM) and a
+  # default retention matching Loki's own retention_period, plus default
+  # bucket encryption. Runs once per `docker compose up`; idempotent.
+  seaweedfs-init:
+    image: amazon/aws-cli:2.41.2
+    container_name: seaweedfs-init
+    restart: "no"
+    entrypoint: ["/bin/sh", "/init/init-bucket.sh"]
+    environment:
+      AWS_ACCESS_KEY_ID: "${SEAWEEDFS_ACCESS_KEY:?Set SEAWEEDFS_ACCESS_KEY in .env}"
+      AWS_SECRET_ACCESS_KEY: "${SEAWEEDFS_SECRET_KEY:?Set SEAWEEDFS_SECRET_KEY in .env}"
+      AWS_DEFAULT_REGION: "us-east-1"
+      S3_ENDPOINT: "http://seaweedfs:8333"
+      BUCKET_NAME: "${SEAWEEDFS_LOKI_BUCKET:-loki-logs}"
+      RETENTION_MODE: "${SEAWEEDFS_RETENTION_MODE:-GOVERNANCE}"
+      RETENTION_DAYS: "395"
+    volumes:
+      - ./seaweedfs/init-bucket.sh:/init/init-bucket.sh:ro
+    depends_on:
+      - seaweedfs
     networks:
       - monitoring
 
@@ -115,3 +169,4 @@ volumes:
   prometheus_data:
   alloy_data:
   loki_data:
+  seaweedfs_data:

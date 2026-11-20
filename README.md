@@ -30,6 +30,8 @@ from the two are separated by the `job` label — `docker-containers` versus
 | Prometheus | `prom/prometheus:v3.13.1` |
 | cAdvisor | `ghcr.io/google/cadvisor:v0.60.5` |
 | Loki | `grafana/loki:3.7.2` |
+| SeaweedFS | `chrislusf/seaweedfs:4.54` |
+| AWS CLI (bucket init only) | `amazon/aws-cli:2.41.2` |
 
 Versions are pinned deliberately. A normal restart therefore cannot silently
 upgrade the stack to an incompatible release.
@@ -66,11 +68,12 @@ All published host ports are in the `5000+` range.
 | Alloy UI | `5002` | `12345` | `127.0.0.1` |
 | cAdvisor UI | `5003` | `8080` | `127.0.0.1` |
 | Loki | `5004` | `3100` | `127.0.0.1` |
+| SeaweedFS S3 | `5005` | `8333` | `127.0.0.1` |
 
-Only Grafana is remotely reachable by default. Prometheus, Alloy, cAdvisor and
-Loki have no authentication in this single-host configuration, so they remain
-bound to localhost. Do not change `MONITORING_BIND_ADDRESS` to `0.0.0.0` unless
-a firewall or authenticated reverse proxy restricts access.
+Only Grafana is remotely reachable by default. Prometheus, Alloy, cAdvisor,
+Loki and SeaweedFS have no authentication in this single-host configuration,
+so they remain bound to localhost. Do not change `MONITORING_BIND_ADDRESS` to
+`0.0.0.0` unless a firewall or authenticated reverse proxy restricts access.
 
 ## 1. Upload and unpack
 
@@ -355,8 +358,10 @@ curl -fsS http://SERVER_LAN_IP:5000/api/health
 
 Defaults:
 
-- Prometheus metrics: `30d`, controlled by `PROMETHEUS_RETENTION`
-- Loki logs: `720h` / 30 days, configured in `loki/loki.yml`
+- Prometheus metrics: `395d` (~13 months), controlled by `PROMETHEUS_RETENTION`.
+  Local disk only — see section 11 for why this is not write-protected.
+- Loki logs: `9480h` / 395 days (~13 months), configured in `loki/loki.yml`.
+  Additionally write-protected (WORM) for that same period — see section 11.
 
 Persistent named volumes:
 
@@ -365,6 +370,8 @@ grafana_data
 prometheus_data
 alloy_data
 loki_data
+seaweedfs_data
+entra_exporter_state
 ```
 
 A normal shutdown preserves data:
@@ -380,20 +387,79 @@ when explicitly intended:
 docker compose down -v
 ```
 
+If the Loki bucket is under `COMPLIANCE`-mode Object Lock (see section 11),
+`-v` will not actually remove the locked objects on SeaweedFS's disk until
+their retention expires, even though the volume is gone from `docker volume
+ls` — the data is orphaned, not deleted.
+
 Monitor disk consumption:
 
 ```bash
 docker system df -v
 docker exec prometheus du -sh /prometheus
 docker exec loki du -sh /loki
+docker exec seaweedfs du -sh /data
 ```
 
-## 11. Collect from k3s (optional)
+## 11. SeaweedFS: WORM storage and encryption at rest
+
+Loki no longer writes logs to local disk. It writes to a bucket on
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) (`seaweedfs` service, S3-compatible),
+self-hosted in this compose file, so that logs are:
+
+- **Encrypted at rest** — SSE-S3, key supplied via `SEAWEEDFS_SSE_KEK`.
+- **Write-protected (WORM / Object Lock)** — once written, a log chunk
+  cannot be modified or deleted for 395 days, enforced by SeaweedFS itself,
+  not by application logic.
+
+### 11.1 One-time setup
+
+```bash
+openssl rand -hex 32   # -> SEAWEEDFS_SSE_KEK
+```
+
+Set `SEAWEEDFS_SSE_KEK`, `SEAWEEDFS_ACCESS_KEY`, `SEAWEEDFS_SECRET_KEY` in
+`.env` (see `.env.example`). On first `docker compose up`, the one-shot
+`seaweedfs-init` container creates the bucket with Object Lock enabled and
+default encryption; Loki waits for it to finish before starting.
+
+### 11.2 GOVERNANCE vs COMPLIANCE — read before switching
+
+`SEAWEEDFS_RETENTION_MODE` (default `GOVERNANCE`):
+
+- **GOVERNANCE**: the lock can still be bypassed by a holder of
+  `s3:BypassGovernanceRetention` — i.e. recoverable in an emergency.
+- **COMPLIANCE**: nobody can override it, including root, until the 395
+  days are up. This also blocks fulfilling a GDPR erasure request for
+  personal data that ended up in a log line, for up to 13 months. Only pick
+  this if that trade-off is intended and approved, not by default.
+
+### 11.3 Known limitations (accepted scope for this pass)
+
+- **No IAM on the SeaweedFS S3 gateway.** `SEAWEEDFS_ACCESS_KEY` /
+  `SEAWEEDFS_SECRET_KEY` are used for request signing only — the gateway
+  isn't configured with an identity store, so any value is accepted. This
+  matches the rest of this stack (no app-level auth anywhere, protected
+  only by `MONITORING_BIND_ADDRESS`/network binding). Tightening this needs
+  a `-s3.config` identities file — not set up here.
+- **Prometheus metrics are not in scope.** They get the same 395d retention
+  but stay on local disk with no WORM/encryption. Giving metrics the same
+  protection needs a long-term-storage layer (Thanos or Mimir writing to
+  object storage) — a materially bigger change, not bundled into this pass.
+- **No TLS between Loki and SeaweedFS.** Both run on the internal `monitoring`
+  Docker network only (`insecure: true` in `loki/loki.yml`); traffic never
+  leaves the host.
+- **SeaweedFS is actively maintained; MinIO Community Edition is not** —
+  MinIO stopped publishing images in 2025 and has an unpatched HIGH-severity
+  CVE (CVE-2025-62506) in its last published image, which is why this stack
+  uses SeaweedFS instead. Keep an eye on SeaweedFS releases regardless.
+
+## 12. Collect from k3s (optional)
 
 Skip this section entirely on a Docker-only host. The Docker collection
 described above keeps working exactly as before whether or not k3s is present.
 
-### 11.1 What gets deployed
+### 12.1 What gets deployed
 
 Everything lands in the `monitoring` namespace:
 
@@ -404,7 +470,7 @@ Everything lands in the `monitoring` namespace:
 | `alloy-config` (ConfigMap) | Alloy pipeline definition |
 | `alloy-endpoints` (ConfigMap) | Where to ship data, and which URLs to health-probe |
 
-### 11.2 Check the endpoints first
+### 12.2 Check the endpoints first
 
 `k8s/15-alloy-endpoints.yaml` assumes the defaults from `.env` — Loki on
 `5004`, Prometheus on `5001`, both on the same server. If those ports were
@@ -415,13 +481,13 @@ applying:
 nano k8s/15-alloy-endpoints.yaml
 ```
 
-### 11.3 Apply
+### 12.3 Apply
 
 ```bash
 kubectl apply -f k8s/
 ```
 
-### 11.4 Verify
+### 12.4 Verify
 
 ```bash
 kubectl -n monitoring get pods
@@ -447,7 +513,7 @@ namespace and containers at the top; dev and prod are separated by the
 container name, and every pod log also carries an `env` label (`dev` / `prod`)
 derived from that name.
 
-### 11.5 After changing the Alloy config
+### 12.5 After changing the Alloy config
 
 A mounted ConfigMap updates itself, but Alloy does not re-read it. Restart the
 DaemonSet after editing `k8s/20-alloy-config.yaml`:
@@ -457,7 +523,7 @@ kubectl apply -f k8s/20-alloy-config.yaml
 kubectl -n monitoring rollout restart daemonset/alloy
 ```
 
-### 11.6 Removing the k3s collector
+### 12.6 Removing the k3s collector
 
 ```bash
 kubectl delete -f k8s/
@@ -465,7 +531,7 @@ kubectl delete -f k8s/
 
 The Docker stack is unaffected.
 
-## 12. Updating the stack
+## 13. Updating the stack
 
 The images are pinned. To apply the same pinned images again:
 
