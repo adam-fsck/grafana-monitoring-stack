@@ -23,7 +23,21 @@ common:
 
 schema_config:
   configs:
+    # Original schema, kept so logs ingested before the SeaweedFS cutover
+    # stay queryable from the existing local loki_data volume. Do not
+    # change or remove this period, or pre-cutover logs become unreadable
+    # even though the chunk files are still on disk.
     - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+    # Cutover to SeaweedFS (WORM + SSE). Set this to the actual deploy
+    # date if it differs from 2026-11-20 — it must be a future date
+    # relative to the previous period and cannot be backdated once set.
+    - from: 2026-11-20
       store: tsdb
       object_store: s3
       schema: v13
@@ -35,6 +49,8 @@ storage_config:
   tsdb_shipper:
     active_index_directory: /loki/index
     cache_location: /loki/index_cache
+  filesystem:
+    directory: /loki/chunks
 
 limits_config:
   # ~13 months, matches the Object Lock default retention on the SeaweedFS
