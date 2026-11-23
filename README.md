@@ -105,6 +105,13 @@ sudo apt update
 sudo apt install -y unzip
 ```
 
+## Quick setup
+
+- `./scripts/setup.sh`
+- generates `.env` from `.env.example` with random secrets
+- pulls images, `docker compose up -d`, runs health check
+- review `MONITORING_HOST` and `ENTRA_*` in `.env` after
+
 ## 2. Create `.env`
 
 ```bash
@@ -598,30 +605,28 @@ docker compose up -d
 Before changing version tags, review component release notes and back up the
 Grafana, Prometheus and Loki volumes.
 
-## 15. Backups (planned, not implemented yet)
+## 15. Backup and restore
 
-This stack has no automated backup. `seaweedfs` runs with `replication_factor: 1`
-on a single node — there is no second copy anywhere. WORM (Object Lock, section
-11) only blocks deletion/modification *within* the retention window; it does
-not protect against disk failure, host loss, or an accidental `docker compose
-down -v` wiping the volume before SeaweedFS has finished reclaiming locked
-objects. Replication or Object Lock is not a substitute for an independent,
-offsite backup.
+`seaweedfs` runs `replication_factor: 1` — single copy, single node. WORM
+only blocks deletes within the retention window; it does not protect
+against disk/host loss. Back up off-host.
 
-What would need backing up, roughly in order of importance:
+Backup:
 
-| Volume | Contents | Priority |
-|---|---|---|
-| `seaweedfs_data` | Loki log chunks (WORM-locked, encrypted) — by far the largest and least recoverable | High |
-| `grafana_data` | Dashboards, datasources, users — small, easy to lose by accident | High |
-| `prometheus_data` | Metrics — already not WORM-protected (section 11.3); losing it loses history | Medium |
-| `.env` | Secrets (`SEAWEEDFS_SSE_KEK`, access keys, Entra client secret) — back up separately from the above, not alongside log data | High (secrets, handle accordingly) |
-| `alloy_data`, `entra_exporter_state` | Pipeline state / poll cursors — rebuildable, lowest priority | Low |
+- `./scripts/backup.sh`
+- tars `grafana_data`, `prometheus_data`, `seaweedfs_data`, `alloy_data`,
+  `entra_exporter_state` + copies `.env`
+- writes to `backups/<timestamp>/` (gitignored)
+- copy that directory off-host yourself — script does not do offsite
 
-Not decided yet, deliberately out of scope for this pass: backup target
-(offsite vs. onsite), schedule, backup retention, and tooling (e.g. `restic`/
-`borg` against an external target). Revisit before relying on this stack for
-anything where losing 13 months of logs would actually matter.
+Restore:
+
+- `./scripts/restore.sh backups/<timestamp>`
+- stops the stack, restores volumes from the tarballs, restarts, runs health check
+
+Not covered: offsite sync, schedule/cron, retention of the backups
+themselves. Set that up separately (e.g. cron + `restic`/`rsync` to a
+remote target).
 
 ## Troubleshooting
 
