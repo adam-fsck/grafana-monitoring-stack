@@ -433,12 +433,23 @@ default encryption; Loki waits for it to finish before starting.
 
 `SEAWEEDFS_RETENTION_MODE` (default `GOVERNANCE`):
 
-- **GOVERNANCE**: the lock can still be bypassed by a holder of
+- **GOVERNANCE**: on paper, the lock can still be bypassed by a holder of
   `s3:BypassGovernanceRetention` — i.e. recoverable in an emergency.
 - **COMPLIANCE**: nobody can override it, including root, until the 395
   days are up. This also blocks fulfilling a GDPR erasure request for
   personal data that ended up in a log line, for up to 13 months. Only pick
   this if that trade-off is intended and approved, not by default.
+
+**Tested 2026-11-23 against `chrislusf/seaweedfs:4.54`:** the GOVERNANCE
+bypass does not actually work. `aws s3api delete-object ... --version-id
+<locked-version> --bypass-governance-retention` still returns
+`AccessDenied`, same as without the flag — only a plain `delete-object`
+without a version ID "succeeds", and that just adds a delete marker; the
+locked version itself is untouched either way. In practice GOVERNANCE
+currently behaves exactly like COMPLIANCE for early deletion on this
+SeaweedFS version. Left the default as GOVERNANCE (harmless, and it'll
+start working for free if a future SeaweedFS version implements the
+bypass) — just don't plan on an early override actually working today.
 
 ### 11.3 Known limitations (accepted scope for this pass)
 
